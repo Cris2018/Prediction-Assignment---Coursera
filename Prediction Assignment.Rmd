@@ -1,0 +1,171 @@
+---
+title: "Prediction Assignment - Coursera"
+author: "Cristiano Viegas"
+date: "03/05/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 1. Summary  
+  
+The goal of your project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test cases.  
+  
+First lets import some libraries that we'll be using for this project.    
+
+```{r libraries, include=FALSE}
+library(caret)
+library(rpart)
+library(rattle)
+library(corrplot)
+``` 
+
+## 2. Background  
+  
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+__Data__  
+  
+The training data for this project are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+  
+The test data are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+  
+>The data for this project come from this source: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har. If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment.  
+  
+  
+## 3. Working with the data  
+  
+The data was previously downloaded. We should load the data and start with cleaning procedures prior to create our algorithm.  
+  
+```{r data}
+trainingdf <- read.csv("pml-training.csv", sep=",", header=TRUE)
+testingdf <- read.csv("pml-testing.csv", sep=",", header=TRUE)
+inTrain <- createDataPartition(y=trainingdf$classe, p=.7, list=FALSE)
+training <- trainingdf[inTrain,]
+validation <- trainingdf[-inTrain,]
+dim(training);dim(testingdf);dim(validation)
+```
+
+The testingdf data set will be used after the best model has been choose.  
+  
+```{r cleaning}
+#Removing near zero variance (caret package)
+nZ <- nearZeroVar(training)
+training <- training[,-nZ]
+validation <- validation[,-nZ]#we use the same set in order to avoid mismatched # of columns
+dim(training);dim(validation)
+#Removing NAs
+NAs <- sapply(training, function(x) mean(is.na(x))) > .95
+training <- training[,NAs==FALSE]
+validation <- validation[,NAs==FALSE]
+#Removing variables that are not predictors
+training <- training[,-(1:5)]
+validation <- validation[,-(1:5)]
+
+```
+
+For exploratory purpose, we'll plot the correlation among the variables:  
+  
+```{r Corr Plot}
+corMatrix <- cor(training[,-54])
+corrplot(corMatrix, method = "color")
+```
+  
+## 4. Prediction Models  
+  
+In order to choose the best model to predict the test data set, we'll create 3 models: __Random Forest__, __Generalized Boosted Model__, and __Decision Tree__.  
+At the end, the best model will be choose by its accuracy against the validation dataset.  
+For the sake of reproducibility, we will use __set.seed(2112)__.
+  
+  
+### 4.1 Random Forest  
+  
+According to Wikipedia (https://en.wikipedia.org/wiki/Random_forest):  
+
+>Random forests or random decision forests are an ensemble learning method for classification, regression and other tasks that operates by constructing a multitude of decision trees at training time and outputting the class that is the mode of the classes (classification) or mean/average prediction (regression) of the individual trees.  
+  
+  
+```{r Random Forest}
+set.seed(2112)
+modRF <- train(classe ~.,data=training, method = "rf",
+               trControl = trainControl(method="cv", number = 3))
+
+modRF$finalModel
+
+#Testing RF
+predictRF <- predict(modRF, newdata=validation)
+CMRF <- confusionMatrix(predictRF,as.factor(validation$classe))
+CMRF
+
+
+```
+
+### 4.2 Generalized Boosted Model (GBM)  
+  
+This models are a combination of decision tree algorithms and boosting methods. It's also know as Boosted Regression Trees.  
+  
+```{r GBM}
+set.seed(2112)
+modGBM <- train(classe ~.,data=training, method = "gbm",
+                trControl = trainControl(method="repeatedcv", number = 5, repeats = 1),
+                verbose=FALSE)
+modGBM$finalModel
+
+#Testing GBM
+predictGBM <- predict(modGBM, newdata=validation)
+CMGBM <- confusionMatrix(predictGBM, as.factor(validation$classe))
+CMGBM
+
+```
+
+### 4.3 Decision Tree  
+  
+For more information on decision trees, check https://en.wikipedia.org/wiki/Decision_tree_learning  
+```{r Decision Tree}
+set.seed(2112)
+modDT <- rpart(classe ~., training, method="class")
+fancyRpartPlot(modDT, caption = "Decision Tree")
+
+#Testing DT
+predictDT <- predict(modDT, newdata=validation, type="class")
+CMDT <- confusionMatrix(predictDT, as.factor(validation$classe))
+CMDT
+
+```
+
+  
+## 5. Comparing the models  
+  
+The accuracy of the three models are:  
+__Random Forest:__ `r round(CMRF$overall['Accuracy'],4)`  
+__GBM:__ `r round(CMGBM$overall['Accuracy'],4)`  
+__Decision Tree:__ `r round(CMDT$overall['Accuracy'],4)`  
+  
+```{r Plot of Accuracy}
+par(mfrow=c(1,3))
+plot(CMRF$table, col = CMRF$byClass, main = paste("Random Forest Accuracy =",
+                                                  round(CMRF$overall['Accuracy'],4)))
+plot(CMGBM$table, col = CMGBM$byClass, main = paste("GBM Accuracy =",
+                                                    round(CMGBM$overall['Accuracy'],4)))
+plot(CMDT$table, col = CMDT$byClass, main = paste("Decision Tree Accuracy =",
+                                                  round(CMDT$overall['Accuracy'],4)))
+par(mfrow=c(1,1))
+
+```
+
+## 6. Applying the best model to the Test Dataset  
+  
+```{r Apllying best model}  
+predictTesting <- predict(modRF,newdata=testingdf)
+  
+```
+
+The __Random Forest__ model predicts the following classes when applied to the testingdf dataset:  
+
+`r predictTesting`  
